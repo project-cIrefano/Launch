@@ -237,12 +237,13 @@ Before deploying, add these variables in Vercel for both **Production** and **Pr
 
 Vercel's deployment hostnames are added to Django's allowed-host list automatically. Add any custom domain to `DJANGO_ALLOWED_HOSTS` as a comma-separated list. `DATABASE_URL` takes precedence over `DB_ENGINE`; PostgreSQL URLs should use the `postgres://` or `postgresql://` scheme. Remote MySQL remains available with `DB_ENGINE=mysql` and the `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, and `DB_PORT` variables.
 
-After the database is connected, link this checkout to the Vercel project with `vercel link`. Then apply the included migrations and add starter menu data once using the production environment:
+The Vercel build runs Django migrations automatically for Production deployments. Preview builds skip migrations so they cannot change the production database. Make sure any schema migrations are backward-compatible with the currently deployed app. To apply the migrations manually instead, link this checkout to the Vercel project and run:
 
 ```sh
 vercel env run --environment=production -- python manage.py migrate --noinput
-vercel env run --environment=production -- python manage.py seed_demo
 ```
+
+After the first production deployment, load the illustrative starter menu data once with `python manage.py seed_demo` using the production database connection.
 
 For local development, pull the Vercel Development variables with `vercel env pull .env.local --environment=development`; Django loads `.env.local` automatically. Do not commit `.env`, `.env.local`, database URLs, Django secrets, or API keys. Vercel environment-variable changes require a new deployment to take effect.
 
