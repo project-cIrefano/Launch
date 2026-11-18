@@ -1,6 +1,12 @@
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 from decimal import Decimal
 from datetime import timedelta
-from django.test import Client, TestCase
+from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
 from .api_views import distance_km
@@ -192,3 +198,109 @@ class TazaWebsiteTests(TestCase):
         self.assertEqual(response.status_code, 400)
         response = self.client.get(reverse("api_nearby_outlets"), {"lat": "bad", "lng": "91.7"})
         self.assertEqual(response.status_code, 400)
+
+
+class VercelDeploymentSettingsTests(SimpleTestCase):
+    def test_dot_env_local_overrides_dot_env_for_database_credentials(self):
+        project_dir = tempfile.mkdtemp()
+        try:
+            config_dir = os.path.join(project_dir, "config")
+            os.makedirs(config_dir)
+            settings_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "settings.py")
+            shutil.copyfile(settings_path, os.path.join(config_dir, "settings.py"))
+            with open(os.path.join(config_dir, "__init__.py"), "w", encoding="utf-8"):
+                pass
+            with open(os.path.join(project_dir, ".env"), "w", encoding="utf-8") as env_file:
+                env_file.write(
+                    "DJANGO_SECRET_KEY=from-dot-env\n"
+                    "DATABASE_URL=postgresql://env-user:env-pass@env-db.example.com:5432/env_db\n"
+                )
+            with open(os.path.join(project_dir, ".env.local"), "w", encoding="utf-8") as env_file:
+                env_file.write(
+                    "DJANGO_SECRET_KEY=from-dot-env-local\n"
+                    "DATABASE_URL=postgresql://local-user:local-pass@local-db.example.com:5432/local_db\n"
+                )
+
+            env = os.environ.copy()
+            for name in (
+                "DJANGO_SECRET_KEY", "DJANGO_DEBUG", "DATABASE_URL", "DB_ENGINE",
+                "VERCEL_URL", "VERCEL_BRANCH_URL", "VERCEL_PROJECT_PRODUCTION_URL",
+            ):
+                env.pop(name, None)
+            env["VERCEL"] = "1"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import config.settings as s; print('|'.join(("
+                    "s.SECRET_KEY, s.DATABASES['default']['HOST'], "
+                    "s.DATABASES['default']['NAME'])))",
+                ],
+                cwd=project_dir,
+                env=env,
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+
+            self.assertEqual(
+                result.stdout.strip(),
+                "from-dot-env-local|local-db.example.com|local_db",
+            )
+        finally:
+            shutil.rmtree(project_dir)
+
+    def test_vercel_hosts_and_postgres_settings_are_loaded(self):
+        env = os.environ.copy()
+        env.update({
+            "VERCEL": "1",
+            "VERCEL_URL": "launch-zafp.vercel.app",
+            "VERCEL_BRANCH_URL": "launch-git-main.vercel.app",
+            "VERCEL_PROJECT_PRODUCTION_URL": "launch.vercel.app",
+            "DJANGO_DEBUG": "False",
+            "DJANGO_SECRET_KEY": "test-vercel-secret",
+            "DATABASE_URL": "postgresql://user:password@db.example.com:5432/store",
+        })
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import json; from config import settings; print(json.dumps({"
+                "'hosts': settings.ALLOWED_HOSTS, 'debug': settings.DEBUG, "
+                "'engine': settings.DATABASES['default']['ENGINE'], "
+                "'sslmode': settings.DATABASES['default']['OPTIONS']['sslmode']}))",
+            ],
+            cwd=os.path.dirname(os.path.dirname(__file__)),
+            env=env,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+        config = json.loads(result.stdout)
+        self.assertIn("launch-zafp.vercel.app", config["hosts"])
+        self.assertIn("launch-git-main.vercel.app", config["hosts"])
+        self.assertIn("launch.vercel.app", config["hosts"])
+        self.assertFalse(config["debug"])
+        self.assertEqual(config["engine"], "django.db.backends.postgresql")
+        self.assertEqual(config["sslmode"], "require")
+
+    def test_vercel_rejects_missing_persistent_database(self):
+        env = os.environ.copy()
+        env.update({
+            "VERCEL": "1",
+            "DJANGO_DEBUG": "False",
+            "DJANGO_SECRET_KEY": "test-vercel-secret",
+            "DATABASE_URL": "",
+            "DB_ENGINE": "sqlite",
+        })
+        result = subprocess.run(
+            [sys.executable, "-c", "from config import settings"],
+            cwd=os.path.dirname(os.path.dirname(__file__)),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Vercel needs a persistent database", result.stderr)

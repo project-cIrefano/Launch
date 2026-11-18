@@ -212,12 +212,39 @@ A new project database starts clean because `db.sqlite3` is not included in the 
 
 - Set a strong `DJANGO_SECRET_KEY` in the environment.
 - Set `DJANGO_DEBUG=False` and configure `DJANGO_ALLOWED_HOSTS`.
+- Use a persistent PostgreSQL or MySQL database on Vercel; its function filesystem is not persistent, so SQLite is not suitable for deployed orders, products or sessions.
 - Use HTTPS, secure cookies, production static-file hosting, logging and database backups.
 - Replace demo outlet data with verified business information.
 - Add real email/SMS delivery notifications and a real payment gateway only when required.
 - Run Django's deployment checks and have permissions/payment flows reviewed before accepting real customer orders.
 
 This is a substantial student/demo starter project, not an audited commercial platform.
+
+## 12. Deploying on Vercel
+
+This repository is a Django application. Import the GitHub repository with the root directory set to `./`, choose the **Django** preset if it is offered, and leave the build, output and install commands on automatic. Vercel detects `manage.py`, and `STATIC_ROOT` is configured for static-file collection.
+
+Before deploying, add these variables in Vercel for both **Production** and **Preview**:
+
+| Variable | Value |
+|---|---|
+| `DJANGO_SECRET_KEY` | A new, long random secret; do not use the example value. |
+| `DJANGO_DEBUG` | `False` |
+| `DATABASE_URL` | A connection URL for a persistent PostgreSQL database. |
+| `OPENWEATHER_API_KEY` | Optional; enables weather. |
+| `GROQ_API_KEY` | Optional; enables the menu assistant. |
+| `GROQ_MODEL` | Optional; defaults to `openai/gpt-oss-20b`. |
+
+Vercel's deployment hostnames are added to Django's allowed-host list automatically. Add any custom domain to `DJANGO_ALLOWED_HOSTS` as a comma-separated list. `DATABASE_URL` takes precedence over `DB_ENGINE`; PostgreSQL URLs should use the `postgres://` or `postgresql://` scheme. Remote MySQL remains available with `DB_ENGINE=mysql` and the `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, and `DB_PORT` variables.
+
+After the database is connected, link this checkout to the Vercel project with `vercel link`. Then apply the included migrations and add starter menu data once using the production environment:
+
+```sh
+vercel env run --environment=production -- python manage.py migrate --noinput
+vercel env run --environment=production -- python manage.py seed_demo
+```
+
+For local development, pull the Vercel Development variables with `vercel env pull .env.local --environment=development`; Django loads `.env.local` automatically. Do not commit `.env`, `.env.local`, database URLs, Django secrets, or API keys. Vercel environment-variable changes require a new deployment to take effect.
 
 ## Restaurant logo
 
